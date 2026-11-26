@@ -1,6 +1,19 @@
+<img src="docs/icon.png" width="96" height="96" alt="ssh-term-proto icon" align="left" />
+
 # ssh-term-proto
 
-シンプルな Android 用 SSH ターミナントクライアント（プロトタイプ）。
+シンプルな Android 用 SSH ターミナルクライアント（プロトタイプ）。
+
+<br clear="left" />
+
+## 目次
+
+- [概要](#概要)
+- [機能](#機能)
+- [インストール](#インストール)
+- [ライセンス](#ライセンス)
+
+## 概要
 
 > ⚠️ **プロトタイプです。** まだ以下のような既知のセキュリティリスクが残っています（詳細は
 > [Issues](https://github.com/hi7-jp/ssh-term-proto/issues) を参照）:
@@ -17,26 +30,21 @@
 - 接続プリセットの保存・呼び出し（パスワードは保存しません）
 - 端末のロック解除（生体認証 / デバイス認証）によるアプリ起動ゲート
 
-## インストール（Obtainium）
+## インストール
 
-本リポジトリの [Releases](https://github.com/hi7-jp/ssh-term-proto/releases) に
-タグ push 時に自動で署名済み APK が公開されます。[Obtainium](https://github.com/ImranR98/Obtainium)
-で以下の GitHub リポジトリ URL を登録してください。
+この Android アプリをインストールするには、以下のいずれかの方法を使ってください。
 
-```
-https://github.com/hi7-jp/ssh-term-proto
-```
+1. **[Releases](https://github.com/hi7-jp/ssh-term-proto/releases) から APK を直接ダウンロード**してインストールする
+2. **[Obtainium](https://github.com/ImranR98/Obtainium) 経由でインストール**し、更新を自動追跡する
 
-## ビルド
+   Obtainium で「アプリを追加」から、本リポジトリの URL を登録してください。
 
-```
-./gradlew assembleDebug
-```
+   ```
+   https://github.com/hi7-jp/ssh-term-proto
+   ```
 
-リリースビルドの署名には環境変数 `ANDROID_KEYSTORE_BASE64` /
-`ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` が必要です
-（CI 側で GitHub Secrets から供給されます）。ローカルでこれらを設定しない場合、
-リリースビルドは未署名になります。
+   新しい署名済み APK がリリースされた際、Obtainium から最新版に更新できます
+   （現状リリースは手動実行です。自動化は今後の課題）。
 
 ## ライセンス
 
