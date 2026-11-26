@@ -30,6 +30,13 @@ android {
     buildFeatures {
         viewBinding = true
     }
+    packaging {
+        resources.excludes += "META-INF/INDEX.LIST"
+        resources.excludes += "META-INF/DEPENDENCIES"
+        resources.excludes += "META-INF/LICENSE*"
+        resources.excludes += "META-INF/NOTICE*"
+        resources.excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+    }
 }
 
 dependencies {
@@ -39,4 +46,5 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.hierynomus:sshj:0.38.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
 }
