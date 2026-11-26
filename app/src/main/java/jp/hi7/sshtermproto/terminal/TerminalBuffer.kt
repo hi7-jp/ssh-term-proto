@@ -155,7 +155,10 @@ class TerminalBuffer(initCols: Int, initRows: Int, private val scrollbackLimit: 
         if (w == 2 && cursorX == cols - 1) {
             if (autoWrap) {
                 // Not enough room for both halves: blank the last cell, wrap.
-                lines[cursorY].clear(cursorX, cursorX + 1, bg)
+                // If that cell is the tail of a wide char, blank its head too.
+                val last = lines[cursorY]
+                val from = if ((last.attrs[cursorX] and TerminalAttr.WIDE_TAIL) != 0) cursorX - 1 else cursorX
+                last.clear(from, cursorX + 1, bg)
                 cursorX = 0
                 lineFeed(bg)
             } else {
@@ -163,15 +166,29 @@ class TerminalBuffer(initCols: Int, initRows: Int, private val scrollbackLimit: 
             }
         }
         val row = lines[cursorY]
+        // Writing (or inserting) at the tail of a wide char splits it; blank
+        // the whole old pair. This must happen BEFORE any shifting: after
+        // insertCells the cell under the cursor is a fresh blank and the
+        // split would no longer be detectable.
+        if (cursorX > 0 && (row.attrs[cursorX] and TerminalAttr.WIDE_TAIL) != 0) {
+            row.clear(cursorX - 1, cursorX + 1, bg)
+        }
         if (insert) {
+            // The last w cells fall off the right edge. If the first dropped
+            // cell is a tail, its head (which stays) would end up orphaned in
+            // the last column, so blank it first. (w == 2 here implies
+            // cursorX <= cols - 2, so dropFrom >= cursorX always holds.)
+            val dropFrom = cols - w
+            if (dropFrom > cursorX && (row.attrs[dropFrom] and TerminalAttr.WIDE_TAIL) != 0) {
+                row.clear(dropFrom - 1, dropFrom, bg)
+            }
             row.insertCells(cursorX, w, bg)
         }
-        // Overwriting one half of an existing wide char would leave an orphan half.
-        if (cursorX > 0 && (row.attrs[cursorX] and TerminalAttr.WIDE_TAIL) != 0) {
-            row.clear(cursorX - 1, cursorX, bg)
-        }
-        if (w == 1 && cursorX + 1 < cols && (row.attrs[cursorX + 1] and TerminalAttr.WIDE_TAIL) != 0) {
-            row.clear(cursorX + 1, cursorX + 2, bg)
+        // Overwriting the head of a wide char (or the 2nd cell of ours landing
+        // on another head) strands the tail just past the written cells.
+        val next = cursorX + w
+        if (next < cols && (row.attrs[next] and TerminalAttr.WIDE_TAIL) != 0) {
+            row.clear(next, next + 1, bg)
         }
         row.set(cursorX, cp, fg, bg, attrs)
         if (w == 2) {
@@ -320,8 +337,9 @@ class TerminalBuffer(initCols: Int, initRows: Int, private val scrollbackLimit: 
         for (row in lines) row.clear(0, cols, bg)
     }
 
-    /** RIS for this buffer. Scrollback is intentionally kept. */
-    fun fullReset() {
+    /** RIS for this buffer. Scrollback is kept unless [clearScrollback] is set. */
+    fun fullReset(clearScrollback: Boolean = false) {
+        if (clearScrollback) scrollback.clear()
         lines = Array(rows) { TerminalRow(cols) }
         cursorX = 0
         cursorY = 0

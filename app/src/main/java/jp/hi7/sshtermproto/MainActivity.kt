@@ -19,7 +19,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
@@ -29,6 +31,12 @@ import java.io.InputStreamReader
 import java.io.OutputStream
 
 class MainActivity : AppCompatActivity() {
+
+    private companion object {
+        // Keyboard show/hide and rotation fire several layout passes in quick
+        // succession; only the last grid size is worth telling the server.
+        const val WINDOW_SIZE_DEBOUNCE_MS = 200L
+    }
 
     private lateinit var editHost: EditText
     private lateinit var editPort: EditText
@@ -69,6 +77,8 @@ class MainActivity : AppCompatActivity() {
     // Dispatchers.IO could reorder bytes across threads.
     private var ioChannel: Channel<() -> Unit>? = null
     private var ioJob: Job? = null
+
+    private var resizeJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -371,17 +381,22 @@ class MainActivity : AppCompatActivity() {
      * Tells the server the PTY is now cols x rows (sshj
      * Session.Shell.changeWindowDimensions, i.e. an SSH "window-change"
      * request). Called on every grid-size change: rotation, soft keyboard
-     * show/hide, connect form hiding.
+     * show/hide, connect form hiding. Debounced: the size is read when the
+     * timer fires, so a burst of changes sends only the final one.
      */
     private fun notifyWindowSize() {
-        val sh = shell ?: return
-        val cols = terminalView.cols
-        val rows = terminalView.rows
-        val wPx = terminalView.width
-        val hPx = terminalView.height
-        ioChannel?.trySend({
-            sh.changeWindowDimensions(cols, rows, wPx, hPx)
-        })
+        resizeJob?.cancel()
+        resizeJob = scope.launch {
+            delay(WINDOW_SIZE_DEBOUNCE_MS)
+            val sh = shell ?: return@launch
+            val cols = terminalView.cols
+            val rows = terminalView.rows
+            val wPx = terminalView.width
+            val hPx = terminalView.height
+            ioChannel?.trySend({
+                sh.changeWindowDimensions(cols, rows, wPx, hPx)
+            })
+        }
     }
 
     private fun startIoWriter() {
@@ -456,7 +471,8 @@ class MainActivity : AppCompatActivity() {
                 Presets.saveLastConnection(this@MainActivity, host, port, user)
                 // Drop leftovers of a previous session (alt screen, hidden
                 // cursor, odd SGR state) before the new shell starts drawing.
-                terminalView.reset()
+                // The previous session's scrollback goes too.
+                terminalView.reset(clearScrollback = true)
                 appendLog("[connected]\n")
                 startIoWriter()
                 startReadingOutput()
@@ -467,6 +483,12 @@ class MainActivity : AppCompatActivity() {
                 notifyWindowSize()
                 terminalView.requestFocus()
                 terminalView.post { terminalView.showKeyboard() }
+            } catch (e: CancellationException) {
+                // Activity destroyed mid-connect. The blocking IO block may
+                // still have stored a live client, so release it, then let the
+                // cancellation propagate (no UI logging).
+                closeConnection()
+                throw e
             } catch (e: Exception) {
                 appendLog("\n[connect failed] ${e.message}\n")
                 closeConnection()
@@ -491,6 +513,8 @@ class MainActivity : AppCompatActivity() {
                     // CRLF conversion: the PTY already sends \r\n).
                     withContext(Dispatchers.Main) { terminalView.feed(chunk) }
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) { appendLog("\n[read error] ${e.message}\n") }
             }
@@ -504,24 +528,42 @@ class MainActivity : AppCompatActivity() {
     private fun closeConnection() {
         readJob?.cancel()
         readJob = null
+        resizeJob?.cancel()
+        resizeJob = null
         ioChannel?.close()
         ioChannel = null
         ioJob?.cancel()
         ioJob = null
-        try { shell?.close() } catch (_: Exception) {}
-        try { session?.close() } catch (_: Exception) {}
-        try { ssh?.disconnect() } catch (_: Exception) {}
+
+        // Hand the live objects to a background closer and clear the fields
+        // right away. Closing writes to the socket, which throws
+        // NetworkOnMainThreadException on the main thread. A scope of its own
+        // is used so the close still runs after `scope` is cancelled in
+        // onDestroy, and a reconnect can't be confused with the old objects.
+        val oldShell = shell
+        val oldSession = session
+        val oldSsh = ssh
         shell = null
         shellOut = null
         session = null
         ssh = null
+        if (oldShell != null || oldSession != null || oldSsh != null) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try { oldShell?.close() } catch (_: Exception) {}
+                try { oldSession?.close() } catch (_: Exception) {}
+                try { oldSsh?.disconnect() } catch (_: Exception) {}
+            }
+        }
+
         // Bring the connect form back so the user can reconnect.
         connectBar.visibility = android.view.View.VISIBLE
         extraKeys.visibility = android.view.View.GONE
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        // Cancel first so no coroutine touches the views while we tear down.
+        scope.cancel()
         closeConnection()
+        super.onDestroy()
     }
 }

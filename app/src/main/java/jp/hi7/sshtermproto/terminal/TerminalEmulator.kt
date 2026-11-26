@@ -112,6 +112,7 @@ class TerminalEmulator(initialCols: Int, initialRows: Int) {
             } catch (e: Exception) {
                 // Never let a malformed sequence escape; resync to ground.
                 state = State.GROUND
+                pendingHigh = 0
             }
         }
     }
@@ -121,13 +122,17 @@ class TerminalEmulator(initialCols: Int, initialRows: Int) {
         altBuffer.resize(cols, rows)
     }
 
-    /** RIS: full reset (scrollback of the normal screen is kept). */
-    fun reset() {
+    /**
+     * RIS: full reset. The normal screen's scrollback is kept unless
+     * [clearScrollback] is set (a remote `ESC c` keeps it; a new session
+     * clears it).
+     */
+    fun reset(clearScrollback: Boolean = false) {
         state = State.GROUND
         pendingHigh = 0
         buffer = mainBuffer
-        mainBuffer.fullReset()
-        altBuffer.fullReset()
+        mainBuffer.fullReset(clearScrollback)
+        altBuffer.fullReset(clearScrollback)
         resetAttrs()
         g0Graphics = false
         g1Graphics = false

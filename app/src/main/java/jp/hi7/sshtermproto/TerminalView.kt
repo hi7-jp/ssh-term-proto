@@ -156,8 +156,9 @@ class TerminalView @JvmOverloads constructor(
         invalidate()
     }
 
-    fun reset() {
-        emulator.reset()
+    /** [clearScrollback] = true also drops the history (use for a brand-new session). */
+    fun reset(clearScrollback: Boolean = false) {
+        emulator.reset(clearScrollback)
         scrollOffset = 0
         composing = ""
         invalidate()
@@ -570,10 +571,13 @@ class TerminalView @JvmOverloads constructor(
             deleteSurroundingText(beforeLength, afterLength)
 
         override fun sendKeyEvent(event: KeyEvent): Boolean {
+            // Only a DOWN that became terminal input counts as handled, so keys
+            // we don't use (volume, camera ...) aren't claimed. Don't call
+            // super: it would re-dispatch to onKeyDown and send the key twice.
             if (event.action == KeyEvent.ACTION_DOWN) {
-                handleKey(event.keyCode, event)
+                return handleKey(event.keyCode, event)
             }
-            return true
+            return false
         }
 
         override fun performEditorAction(actionCode: Int): Boolean {
