@@ -1,12 +1,19 @@
 package jp.hi7.sshtermproto
 
 import android.os.Bundle
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,6 +37,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var scrollLog: ScrollView
     private lateinit var btnConnect: Button
     private lateinit var btnSend: Button
+    private lateinit var spinnerPresets: Spinner
+    private lateinit var btnSavePreset: Button
+    private lateinit var btnDeletePreset: Button
+    private lateinit var lockOverlay: android.view.View
+    private lateinit var lockStatus: TextView
+    private lateinit var btnRetryUnlock: Button
+
+    // "" represents "no preset selected" (just the free-typed / last-connection fields)
+    private var presetNames: MutableList<String> = mutableListOf()
+
+    // Device-credential auth is required every time this activity becomes
+    // visible, not just on cold start — otherwise Home/Recents would bypass
+    // it entirely. Not persisted: a fresh process always starts locked.
+    private var unlocked = false
 
     private val scope = CoroutineScope(Dispatchers.Main)
     private var readJob: Job? = null
@@ -41,6 +62,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Keep connection targets and command output out of Recents
+        // thumbnails and screen recordings while the lock is relevant.
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         setContentView(R.layout.activity_main)
 
         editHost = findViewById(R.id.editHost)
@@ -52,9 +76,18 @@ class MainActivity : AppCompatActivity() {
         scrollLog = findViewById(R.id.scrollLog)
         btnConnect = findViewById(R.id.btnConnect)
         btnSend = findViewById(R.id.btnSend)
+        spinnerPresets = findViewById(R.id.spinnerPresets)
+        btnSavePreset = findViewById(R.id.btnSavePreset)
+        btnDeletePreset = findViewById(R.id.btnDeletePreset)
+        lockOverlay = findViewById(R.id.lockOverlay)
+        lockStatus = findViewById(R.id.lockStatus)
+        btnRetryUnlock = findViewById(R.id.btnRetryUnlock)
 
         btnConnect.setOnClickListener { onConnectClicked() }
         btnSend.setOnClickListener { sendCommand() }
+        btnSavePreset.setOnClickListener { onSavePresetClicked() }
+        btnDeletePreset.setOnClickListener { onDeletePresetClicked() }
+        btnRetryUnlock.setOnClickListener { requestUnlock() }
         editCommand.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
                 sendCommand()
@@ -63,6 +96,192 @@ class MainActivity : AppCompatActivity() {
                 false
             }
         }
+
+        refreshPresetSpinner(selectName = Presets.getLastPresetName(this))
+        spinnerPresets.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
+                val name = presetNames.getOrNull(position) ?: return
+                if (name.isEmpty()) {
+                    Presets.clearLastPresetName(this@MainActivity)
+                    return
+                }
+                val preset = Presets.loadAll(this@MainActivity).firstOrNull { it.name == name } ?: return
+                applyPresetToFields(preset)
+                Presets.setLastPresetName(this@MainActivity, name)
+            }
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) {}
+        }
+
+        // Nothing saved as a named preset yet? At least restore the last
+        // successful connection's host/port/user so the fields aren't blank.
+        if (Presets.getLastPresetName(this) == null) {
+            Presets.loadLastConnection(this)?.let { applyPresetToFields(it) }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!unlocked) {
+            requestUnlock()
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Require fresh auth next time this activity is shown again,
+        // including a plain Home/Recents round-trip.
+        unlocked = false
+        lockOverlay.visibility = android.view.View.VISIBLE
+    }
+
+    private fun requestUnlock() {
+        lockOverlay.visibility = android.view.View.VISIBLE
+        btnRetryUnlock.visibility = android.view.View.GONE
+
+        val biometricManager = BiometricManager.from(this)
+        val allowed = BiometricManager.Authenticators.BIOMETRIC_WEAK or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
+
+        when (biometricManager.canAuthenticate(allowed)) {
+            BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED,
+            BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> {
+                // Genuinely nothing to gate on this device: no lock screen,
+                // no biometric hardware, ever. Proceed but say why.
+                lockStatus.text = "端末に画面ロックが設定されていないため認証をスキップしました"
+                unlockApp()
+                return
+            }
+            BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> {
+                // Transient — do NOT fail-open. Let the user retry.
+                lockStatus.text = "認証デバイスが一時的に利用できません"
+                btnRetryUnlock.visibility = android.view.View.VISIBLE
+                return
+            }
+            BiometricManager.BIOMETRIC_SUCCESS -> { /* fall through to prompt */ }
+            else -> {
+                lockStatus.text = "認証を利用できません"
+                btnRetryUnlock.visibility = android.view.View.VISIBLE
+                return
+            }
+        }
+
+        lockStatus.text = "端末のロック解除で認証してください"
+
+        val executor = ContextCompat.getMainExecutor(this)
+        val prompt = BiometricPrompt(this, executor, object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                unlockApp()
+            }
+
+            override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                // User cancel / back also lands here. Stay locked; offer retry.
+                lockStatus.text = "認証失敗: $errString"
+                btnRetryUnlock.visibility = android.view.View.VISIBLE
+            }
+
+            override fun onAuthenticationFailed() {
+                lockStatus.text = "認証できませんでした。再試行してください"
+            }
+        })
+
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("SshTermProto")
+            .setSubtitle("端末のロック解除で開きます")
+            .setAllowedAuthenticators(allowed)
+            .build()
+
+        prompt.authenticate(promptInfo)
+    }
+
+    private fun unlockApp() {
+        unlocked = true
+        lockOverlay.visibility = android.view.View.GONE
+    }
+
+    private fun applyPresetToFields(preset: Preset) {
+        editHost.setText(preset.host)
+        editPort.setText(preset.port.toString())
+        editUser.setText(preset.user)
+    }
+
+    private fun refreshPresetSpinner(selectName: String? = null) {
+        val names = mutableListOf("")
+        names.addAll(Presets.loadAll(this).map { it.name })
+        presetNames = names
+        val labels = names.map { if (it.isEmpty()) "(プリセット未選択)" else it }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, labels)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerPresets.adapter = adapter
+        val idx = if (selectName != null) names.indexOf(selectName).let { if (it < 0) 0 else it } else 0
+        spinnerPresets.setSelection(idx, false)
+    }
+
+    private fun onSavePresetClicked() {
+        val host = editHost.text.toString().trim()
+        val port = editPort.text.toString().toIntOrNull() ?: 22
+        val user = editUser.text.toString().trim()
+        if (host.isEmpty() || user.isEmpty()) {
+            appendLog("\n[save preset] host / username is required\n")
+            return
+        }
+        if (!Presets.isValidPort(port)) {
+            appendLog("\n[save preset] port must be 1-65535\n")
+            return
+        }
+
+        val input = EditText(this)
+        val currentName = presetNames.getOrNull(spinnerPresets.selectedItemPosition)?.takeIf { it.isNotEmpty() }
+        input.setText(currentName ?: "$user@$host")
+
+        val existingNames = Presets.loadAll(this).map { it.name }.toSet()
+
+        AlertDialog.Builder(this)
+            .setTitle("プリセット名")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) {
+                    appendLog("\n[save preset] name is required\n")
+                    return@setPositiveButton
+                }
+                if (name in existingNames) {
+                    AlertDialog.Builder(this)
+                        .setTitle("上書き確認")
+                        .setMessage("プリセット「$name」は既に存在します。上書きしますか?")
+                        .setPositiveButton("上書き") { _, _ -> doSavePreset(name, host, port, user) }
+                        .setNegativeButton("キャンセル", null)
+                        .show()
+                } else {
+                    doSavePreset(name, host, port, user)
+                }
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
+    }
+
+    private fun doSavePreset(name: String, host: String, port: Int, user: String) {
+        Presets.upsert(this, Preset(name, host, port, user))
+        Presets.setLastPresetName(this, name)
+        refreshPresetSpinner(selectName = name)
+        appendLog("\n[preset saved] $name\n")
+    }
+
+    private fun onDeletePresetClicked() {
+        val name = presetNames.getOrNull(spinnerPresets.selectedItemPosition)?.takeIf { it.isNotEmpty() }
+        if (name == null) {
+            appendLog("\n[delete preset] no preset selected\n")
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("削除確認")
+            .setMessage("プリセット「$name」を削除しますか?")
+            .setPositiveButton("削除") { _, _ ->
+                Presets.delete(this, name)
+                refreshPresetSpinner()
+                appendLog("\n[preset deleted] $name\n")
+            }
+            .setNegativeButton("キャンセル", null)
+            .show()
     }
 
     private fun appendLog(text: String) {
@@ -82,6 +301,10 @@ class MainActivity : AppCompatActivity() {
 
         if (host.isEmpty() || user.isEmpty()) {
             appendLog("\n[host / username is required]\n")
+            return
+        }
+        if (!Presets.isValidPort(port)) {
+            appendLog("\n[port must be 1-65535]\n")
             return
         }
 
@@ -105,6 +328,10 @@ class MainActivity : AppCompatActivity() {
                     shell = sh
                     shellOut = sh.outputStream
                 }
+                // Remember host/port/user (never the password) only once the
+                // connection actually succeeded — a failed attempt shouldn't
+                // overwrite a good "last connection".
+                Presets.saveLastConnection(this@MainActivity, host, port, user)
                 appendLog("[connected]\n")
                 startReadingOutput()
             } catch (e: Exception) {

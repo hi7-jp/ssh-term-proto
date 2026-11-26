@@ -47,4 +47,5 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("com.hierynomus:sshj:0.38.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("androidx.biometric:biometric:1.1.0")
 }
