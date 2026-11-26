@@ -15,9 +15,26 @@ android {
         versionName = "0.1"
     }
 
+    // Release signing comes from env vars so no secret ever lands in the
+    // repo. Locally unset -> release build is simply unsigned.
+    signingConfigs {
+        create("release") {
+            val ksPath = System.getenv("ANDROID_KEYSTORE_PATH")
+            if (ksPath != null) {
+                storeFile = file(ksPath)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (System.getenv("ANDROID_KEYSTORE_PATH") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {

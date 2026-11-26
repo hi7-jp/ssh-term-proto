@@ -1,0 +1,42 @@
+name: Release APK
+
+# 注意: このワークフローは現在意図的に無効化されている(GitHub Actionsの
+# 無料枠分を使い切ったため)。再度有効化するまでは `on:` を元に戻さないこと。
+# 有効化する場合は下の `on:` ブロックのコメントを外す。
+#
+# on:
+#   push:
+#     tags:
+#       - "v*"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Decode keystore
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
+
+      - name: Build release APK
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/release.keystore
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+          generate_release_notes: true
