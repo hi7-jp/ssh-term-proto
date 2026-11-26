@@ -11,8 +11,8 @@ android {
         applicationId = "jp.hi7.sshtermproto"
         minSdk = 24
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.0.1"
     }
 
     // Release signing comes from env vars so no secret ever lands in the
