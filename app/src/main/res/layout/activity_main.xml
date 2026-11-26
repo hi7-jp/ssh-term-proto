@@ -93,48 +93,35 @@
                 android:text="Connect" />
         </LinearLayout>
 
-        <ScrollView
-            android:id="@+id/scrollLog"
+        <!-- Replaces the old ScrollView+TextView log and the one-line command
+             row. The view draws the ANSI character grid itself and is also the
+             key-input target (see TerminalView). -->
+        <jp.hi7.sshtermproto.TerminalView
+            android:id="@+id/terminalView"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:layout_marginTop="8dp"
-            android:background="#000000">
+            android:focusable="true"
+            android:focusableInTouchMode="true" />
 
-            <TextView
-                android:id="@+id/textLog"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="#00FF66"
-                android:textIsSelectable="true"
-                android:textSize="12sp" />
-        </ScrollView>
-
-        <LinearLayout
+        <!-- Keys a phone keyboard lacks (Esc / Tab / Ctrl / arrows ...).
+             Buttons are added in MainActivity.buildExtraKeys(); shown only
+             while a session is connected. -->
+        <HorizontalScrollView
+            android:id="@+id/extraKeys"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:layout_marginTop="8dp">
+            android:layout_marginTop="4dp"
+            android:scrollbars="none"
+            android:visibility="gone">
 
-            <EditText
-                android:id="@+id/editCommand"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:hint="command"
-                android:textColor="#00FF66"
-                android:textColorHint="#336633"
-                android:fontFamily="monospace"
-                android:inputType="text|textNoSuggestions"
-                android:imeOptions="actionSend" />
-
-            <Button
-                android:id="@+id/btnSend"
+            <LinearLayout
+                android:id="@+id/extraKeysRow"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Send" />
-        </LinearLayout>
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
     </LinearLayout>
 
     <!-- Covers the whole screen until device-credential auth succeeds.
@@ -147,6 +134,8 @@
         android:gravity="center"
         android:background="#000000"
         android:padding="24dp"
+        android:clickable="true"
+        android:focusable="true"
         android:visibility="visible">
 
         <TextView

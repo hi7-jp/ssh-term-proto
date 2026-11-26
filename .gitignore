@@ -11,3 +11,4 @@ app/build/
 *.keystore
 *.jks
 *.env
+diff.txt
