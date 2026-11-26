@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.SshTermProto" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#00FF66</item>
+        <item name="colorPrimaryDark">#000000</item>
+        <item name="android:windowBackground">#000000</item>
+    </style>
+</resources>
